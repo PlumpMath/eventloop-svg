@@ -1,16 +1,19 @@
 // draw a donat-charts easily
 // new Arc(x, y, radius, startAngle, endAngle, antiClockwise)
 //
+//
+//console.log(async);
 
 var clientXY    = [ 100, 150 ];
 var taskStartXY = clientXY.map(function(pos){ return pos + 50; });
 var serverXY    = [ 500, 100 ];
+var lightsXY    = [ serverXY[0] + 90, serverXY[1] + 190 ];
 var taskRunXY   = serverXY.map(function(pos){ return pos + 50; });
 //var taskDispatchedXY = [ serverXY[0] , serverXY[1] ];
 var taskDispatchedXY = [ serverXY[0] + 50 , serverXY[1] + 10];
 var taskWaitXY  = [ serverXY[0] + 50 , serverXY[1] + 10];
 var taskDoneXY  = [ serverXY[0] + 50, serverXY[1] + 150];
-var masterMS    = 20;
+var masterMS    = 10;
 var tau         = Math.PI*2;
 
 server = {
@@ -19,9 +22,12 @@ server = {
   maxThreads : 3,
   curThreads : 0,
   incr : 0,
+  lights : [],     //will hold Circle shape objects
+  responseTimes : [],
   run : function(task){
     this.incr++;
     this.curThreads++;
+    this.updateLights();
     task.run();
     if(this.curThreads == this.maxThreads){
       this.busy = true;
@@ -38,31 +44,68 @@ server = {
     }
   },
   unload : function(task){
+    this.updateResponseTimes(task.responseMS);
+    this.curThreads--;
+    this.updateLights();
     if(this.waiting.length){
-      console.log('waiting: ' + this.waiting.length);
       this.waiting.map(function(task, idx){
         task.wait(idx);
       });
       setTimeout(function(){
-        this.curThreads--;
         this.busy = false;
         this.run(this.waiting.shift());
       }.bind(this), 101);
     }else{
       console.log('waiting stack empty');
-      this.curThreads--;
       this.busy = false;
     }
+  },
+  updateLights : function(){
+    this.lights.map(function(light, idx){
+      if(this.curThreads > idx){
+        light.fill('#F00');
+      }else{
+        light.fill('#000');
+      }
+    }.bind(this));
+  },
+  updateResponseTimes : function(time){
+    this.responseTimes.push(time);
+    var responseTotals = this.responseTimes.reduce(
+      function(sum, cur) { return sum + cur; }
+    );
+    var responseAvg = responseTotals / this.responseTimes.length;
+    this.timeText.attr('text', 'Average Response Time: '
+        + Math.floor(responseAvg.toString())
+        + 'ms');
   }
 };
 
-var cloud = new Rect(clientXY[0],clientXY[1],100,100)
-  .stroke('#f00', 2)
-  .addTo(stage);
+function initStage(){
+  var cloud = new Rect(clientXY[0],clientXY[1],100,100)
+    .stroke('#f00', 2)
+    .addTo(stage);
 
-var serverBox = new Rect(serverXY[0],serverXY[1],100,200)
-  .stroke('#f00', 2)
-  .addTo(stage);
+  var serverBox = new Rect(serverXY[0],serverXY[1],100,200)
+    .stroke('#f00', 2)
+    .addTo(stage);
+
+  for(i = 0; i < server.maxThreads; i++){
+    server.lights.push(
+      new Circle(lightsXY[0], lightsXY[1] - 10 * i, 3)
+        .stroke('#000', 2)
+        .fill('#000')
+        .addTo(stage)
+    );
+  }
+  server.timeText = new Text('Average Response Time: ').addTo(stage).attr({
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '20',
+    textStrokeColor: 'black',
+    x : 100,
+    y : 50
+  });
+}
 
 function Task(color, stepMultiplier, x, y){
   this.stepLength = this.defaultStep * stepMultiplier;
@@ -75,6 +118,10 @@ function Task(color, stepMultiplier, x, y){
     .attr('y', taskStartXY[1])
     .attr('rotation', Math.PI * 1.5)
     .addTo(stage);
+
+  var border = new Circle(0, 0, 20)
+    .stroke('#000', 2)
+    .addTo(this.circ);
 
   this.todo = null;
   this.done = null;
@@ -145,10 +192,12 @@ tools.mixin(Task.prototype, EventEmitter);
 
 Task.prototype.on('queued', function(){
   server.load(this);
+  this.queueTime = Date.now();
 });
 
 Task.prototype.on('completed', function(){
   clearInterval(this.interval);
+  this.responseMS = Date.now() - this.queueTime;
   this.move(taskStartXY)
     .on('end', function(){
       this.circ.destroy();
@@ -167,7 +216,7 @@ function makeTask(speed){
     case speed < 0.8 && speed >= 0.5:
       return new Task('blue', speed);
     case speed < 0.5 && speed >= 0.3:
-      return new Task('yellow', speed);
+      return new Task('purple', speed);
     case speed < 0.3 && speed >= 0.1:
       return new Task('orange', speed);
     default:
@@ -178,6 +227,7 @@ function makeTask(speed){
 var t = new Task('red', 0.5);
 t.dispatch();
 
+initStage();
 stage.on('click', function(){
   makeTask(Math.random())
     .dispatch();
