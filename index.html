@@ -1,6 +1,17 @@
 <html lang="en">
   <body>
   <div style="border:solid 1px green" id="stage"></div>
+  <ul>
+    <li><a href="?maxThreads=1">Single Threads</a></li>
+    <li><a href="?maxThreads=3">Three Threads</a></li>
+    <li><a href="?async">Async/eventloop</a></li>
+  </ul>
+  <pre>
+  Settings (via querystring)
+    maxThreads
+    async (overrides maxThreads)
+  </pre>
+
   <script src="vendor/async.min.js"></script>
   <script src="vendor/bonsai.min.js"></script>
   <script>
@@ -8,7 +19,8 @@ console.log(async);
     bonsai.run(document.getElementById('stage'), {
       url: 'eventLoopAnim.js',
       width: 800,
-      height: 400
+      height: 400,
+      conf : window.location.search
     });
   </script>
 </body></html>

@@ -1,8 +1,11 @@
 // draw a donat-charts easily
 // new Arc(x, y, radius, startAngle, endAngle, antiClockwise)
 //
-//
-//console.log(async);
+var conf = stage.options.conf
+    .replace('?','').split('&')
+    .map(function(str){ return str.split('='); })
+    .reduce(function(conf, tuple){ conf[tuple[0]] = tuple[1]; return conf; }, {});
+console.log(conf);
 
 var clientXY    = [ 100, 150 ];
 var taskStartXY = clientXY.map(function(pos){ return pos + 50; });
@@ -18,33 +21,40 @@ var tau         = Math.PI*2;
 
 server = {
   busy : false,
+  blocked : false,
   waiting : [],
-  maxThreads : 3,
+  async : conf.hasOwnProperty('async') ? true : false,
+  maxThreads : conf.hasOwnProperty('async') ? 999 : Number(conf.maxThreads) || 1,
   curThreads : 0,
-  incr : 0,
+  processed : 0,
   lights : [],     //will hold Circle shape objects
   responseTimes : [],
   run : function(task){
-    this.incr++;
+    if(!task) return;
     this.curThreads++;
     this.updateLights();
     task.run();
+    if(this.async){
+      if(task.sync){
+        this.blocked = true;
+      }else{
+      }
+    }
     if(this.curThreads == this.maxThreads){
       this.busy = true;
     }
   },
   load : function(task){
-    if(this.busy){
-      console.log('busy');
+    if(this.busy || this.blocked){
       this.waiting.push(task);
-      task.wait(this.waiting.length);
+      task.wait(this.waiting.length - 1);
     }else{
-      console.log('NOT busy');
       this.run(task);
     }
   },
   unload : function(task){
-    this.updateResponseTimes(task.responseMS);
+    this.processed++;
+    this.updateLabels(task.responseMS, this.processed);
     this.curThreads--;
     this.updateLights();
     if(this.waiting.length){
@@ -69,7 +79,7 @@ server = {
       }
     }.bind(this));
   },
-  updateResponseTimes : function(time){
+  updateLabels : function(time, processed){
     this.responseTimes.push(time);
     var responseTotals = this.responseTimes.reduce(
       function(sum, cur) { return sum + cur; }
@@ -78,6 +88,7 @@ server = {
     this.timeText.attr('text', 'Average Response Time: '
         + Math.floor(responseAvg.toString())
         + 'ms');
+    this.countText.attr('text', 'Tasks Processed: ' + processed);
   }
 };
 
@@ -90,13 +101,15 @@ function initStage(){
     .stroke('#f00', 2)
     .addTo(stage);
 
-  for(i = 0; i < server.maxThreads; i++){
-    server.lights.push(
-      new Circle(lightsXY[0], lightsXY[1] - 10 * i, 3)
-        .stroke('#000', 2)
-        .fill('#000')
-        .addTo(stage)
-    );
+  if(!conf.async){
+    for(i = 0; i < server.maxThreads; i++){
+      server.lights.push(
+        new Circle(lightsXY[0], lightsXY[1] - 10 * i, 3)
+          .stroke('#000', 2)
+          .fill('#000')
+          .addTo(stage)
+      );
+    }
   }
   server.timeText = new Text('Average Response Time: ').addTo(stage).attr({
     fontFamily: 'Arial, sans-serif',
@@ -105,13 +118,23 @@ function initStage(){
     x : 100,
     y : 50
   });
+
+  server.countText = new Text('Tasks Processed: ').addTo(stage).attr({
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '20',
+    textStrokeColor: 'black',
+    x : 100,
+    y : 80
+  });
 }
 
-function Task(color, stepMultiplier, x, y){
+function Task(color, stepMultiplier, sync){
   this.stepLength = this.defaultStep * stepMultiplier;
+  this.worktime = (tau / this.stepLength) * masterMS;
+  this.sync = sync;
+
   this.completed = 0;
   this.interval = null;
-  this.worktime = (tau / this.stepLength) * masterMS;
 
   this.circ = new Group()
     .attr('x', taskStartXY[0])
@@ -119,12 +142,30 @@ function Task(color, stepMultiplier, x, y){
     .attr('rotation', Math.PI * 1.5)
     .addTo(stage);
 
-  var border = new Circle(0, 0, 20)
-    .stroke('#000', 2)
-    .addTo(this.circ);
+  if(server.async && !sync){
+    this.strokeWidth = 10;
+    this.radius = 15;
+    var innerBorder = new Circle(0, 0, 10)
+      .stroke('#000', 2)
+      .addTo(this.circ);
+  }
 
+  if(server.async && sync){
+    var border = new Circle(0, 0, 20)
+      .stroke('#F00', 3)
+      .addTo(this.circ);
+  }else{
+    var border = new Circle(0, 0, 20)
+      .stroke('#000', 2)
+      .addTo(this.circ);
+  }
+
+  //shapes:
   this.todo = null;
   this.done = null;
+
+  //state:
+  this.paused = false;
 
   this.doneAttr = {
     strokeWidth: this.strokeWidth,
@@ -176,17 +217,38 @@ Task.prototype.dispatch = function(){
 };
 
 Task.prototype.run = function run() {
+  this.paused = false;
   this.interval = setInterval(this.step.bind(this), masterMS);
   this.move(taskDoneXY, this.worktime + 'ms');
   console.log('running');
 };
 
+Task.prototype.pause = function pause(){
+  this.paused = true;
+  clearInterval(this.interval);
+};
+
 Task.prototype.wait = function(placeInLine){
   var position = [taskWaitXY[0], taskWaitXY[1]];
   position[0] = position[0] - 10 * placeInLine;
-  console.log(server.waiting.length);
   var sending = this.move(position, '100ms');
 };
+
+Task.prototype.attemptResponse = function attemptResponse(){
+  if(!server.blocked){
+    this.responseMS = Date.now() - this.queueTime;
+    this.move(taskStartXY)
+      .on('end', function(){
+        this.circ.destroy();
+        delete this;
+      }.bind(this));
+    server.unload(this);
+    this.circ.removeChild(this.todo);
+  }else{
+    setTimeout(this.attemptResponse.bind(this), 1);
+  }
+};
+
 
 tools.mixin(Task.prototype, EventEmitter);
 
@@ -196,41 +258,40 @@ Task.prototype.on('queued', function(){
 });
 
 Task.prototype.on('completed', function(){
+  //check if it was a blocking async task & unblock if so
+  if(server.blocked && this.sync){
+    server.blocked = false;
+  }
   clearInterval(this.interval);
-  this.responseMS = Date.now() - this.queueTime;
-  this.move(taskStartXY)
-    .on('end', function(){
-      this.circ.destroy();
-      delete this;
-    }.bind(this));
-  server.unload(this);
-  this.circ.removeChild(this.todo);
+  this.attemptResponse();
 });
 
 /////////
 
-function makeTask(speed){
+function makeTask(speed, sync){
   switch(true){
     case speed >= 0.8:
-      return new Task('green', speed);
+      return new Task('green', speed, sync);
     case speed < 0.8 && speed >= 0.5:
-      return new Task('blue', speed);
+      return new Task('blue', speed, sync);
     case speed < 0.5 && speed >= 0.3:
-      return new Task('purple', speed);
+      return new Task('purple', speed, sync);
     case speed < 0.3 && speed >= 0.1:
-      return new Task('orange', speed);
+      return new Task('orange', speed, sync);
     default:
-      return new Task('red', 0.1);
+      return new Task('red', 0.1, sync);
   }
 }
 
-var t = new Task('red', 0.5);
-t.dispatch();
-
+//
 initStage();
 stage.on('click', function(){
   makeTask(Math.random())
     .dispatch();
 });
-//t.run();
 
+stage.on('key', function(e) {
+  if(e.keyCode == 32){ //spacebar
+    makeTask(.09, true).dispatch();
+  }
+});
