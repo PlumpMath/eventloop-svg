@@ -5,7 +5,7 @@ var conf = stage.options.conf
     .replace('?','').split('&')
     .map(function(str){ return str.split('='); })
     .reduce(function(conf, tuple){ conf[tuple[0]] = tuple[1]; return conf; }, {});
-console.log(conf);
+conf.async = conf.hasOwnProperty('async');
 
 var clientXY    = [ 100, 150 ];
 var taskStartXY = clientXY.map(function(pos){ return pos + 50; });
@@ -19,12 +19,14 @@ var taskDoneXY  = [ serverXY[0] + 50, serverXY[1] + 150];
 var masterMS    = 10;
 var tau         = Math.PI*2;
 
+console.log(conf.async);
+
 server = {
   busy : false,
   blocked : false,
   waiting : [],
-  async : conf.hasOwnProperty('async') ? true : false,
-  maxThreads : conf.hasOwnProperty('async') ? 999 : Number(conf.maxThreads) || 1,
+  async : conf.async,
+  maxThreads : conf.async ? 999 : Number(conf.maxThreads) || 1,
   curThreads : 0,
   processed : 0,
   lights : [],     //will hold Circle shape objects
@@ -38,6 +40,13 @@ server = {
       if(task.sync){
         this.blocked = true;
       }else{
+        //var hitSync = false;
+        //this.waiting.map(function(task){
+          //if(task.sync){
+            //hitSync = true;
+          //}
+          //if(!hitSync) this.run(task);
+        //}.bind(this));
       }
     }
     if(this.curThreads == this.maxThreads){
@@ -63,7 +72,9 @@ server = {
       });
       setTimeout(function(){
         this.busy = false;
-        this.run(this.waiting.shift());
+        if(!this.blocked){
+          this.run(this.waiting.shift());
+        }
       }.bind(this), 101);
     }else{
       console.log('waiting stack empty');
@@ -152,7 +163,7 @@ function Task(color, stepMultiplier, sync){
 
   if(server.async && sync){
     var border = new Circle(0, 0, 20)
-      .stroke('#F00', 3)
+      .stroke('#F00', 5)
       .addTo(this.circ);
   }else{
     var border = new Circle(0, 0, 20)
@@ -220,7 +231,6 @@ Task.prototype.run = function run() {
   this.paused = false;
   this.interval = setInterval(this.step.bind(this), masterMS);
   this.move(taskDoneXY, this.worktime + 'ms');
-  console.log('running');
 };
 
 Task.prototype.pause = function pause(){
